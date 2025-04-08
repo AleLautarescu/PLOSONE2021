@@ -1,0 +1,2829 @@
+---
+title: "EPRIME STRUCTURAL ANALYSIS - RMARKDOWN FILE"
+author: "Alexandra Lautarescu"
+date: "02/02/2021"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 5
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '5'
+---
+
+This is an RMarkdown file summarising the analysis for the eprime structural MRI data. 
+
+# FIRST ANALYSIS STEPS 
+## ORGANISING FILES
+First, I am loading the necessary packages.(supressing messages from appearing in RMarkdown output)
+
+```{r results="hide", warning=FALSE, comment=FALSE, message=FALSE}
+library(tidyverse)
+library(plyr)
+library(dplyr)
+library(psych)
+library(janitor)
+library(lsr)
+library(car)
+library(gplots)
+library(Hmisc)     
+library(corrplot)
+library(heplots)
+library(sandwich)
+library(lmtest)
+library(ggplot2)
+```
+
+Then, I am setting the theme for any future plots 
+```{r}
+theme_set(
+        theme_minimal((base_size = 16)) +
+                theme(legend.position = "right"))
+
+```
+
+Loading the necessary dataframe.
+```{r}
+eprimeStruct <-read.csv("ParticipantListEprime.csv", header=TRUE,
+                        na.strings=c("9999","999","NA"))
+```
+
+To turn off scientific notation, I will also run: 
+```{r}
+options(scipen=999) 
+```
+
+
+## DESCRIPTIVE STATISTICS 
+Getting descriptive statistics. Info hidden in RMarkdown where tables are too big. Selected only numeric variables as otherwise it would give error when trying to describe ID for example.
+```{r results="hide", warning=FALSE}
+psych::describe(select_if(eprimeStruct, is.numeric))
+```
+
+Get frequency for categorical variables
+```{r}
+count(eprimeStruct$SEX)
+```
+
+```{r}
+count(eprimeStruct$Mat_educ)
+```
+
+Check missing data by asking for summary statistics. Hide results as table is too big.
+```{r results="hide"}
+summary(eprimeStruct) 
+```
+
+Get correlation matrix . Hide results as table is too big.
+```{r results="hide"}
+eprimeStructMatrix = subset(eprimeStruct, 
+                            select=c(GA, PMA, Birth_weight, OFC, IMD_SES, 
+                                     MAT_AGE, Mat_educ, 
+                                     Complications_total,DAYS_TPN,Days_Vent,
+                                     TBV_volume, 
+                                     FrontalGMbyTBV, TempGMbyTBV, ThalamusbyTBV, 
+                                     AmygdalabyTBV, 
+                                     HippocampusByTBV))
+
+eprimeStructMatrixFin <- as.matrix(eprimeStructMatrix)
+
+rcorr(eprimeStructMatrixFin)
+```
+
+Checking distribution of variables 
+```{r}
+hist(eprimeStruct$FrontalGMbyTBV, main="Frontal GM histogram")
+hist (eprimeStruct$TempGMbyTBV, main="Temporal GM histogram") 
+hist (eprimeStruct$ThalamusbyTBV, main="Thalamus histogram") 
+hist (eprimeStruct$AmygdalabyTBV, main="Amygdala histogram") 
+hist (eprimeStruct$HippocampusByTBV, main="Hippocampus histogram") 
+hist(eprimeStruct$EventSum, main="Stressful events histogram") 
+hist(eprimeStruct$STAI_TRSum, main="Trait anxiety histogram")
+```
+
+## OUTLIERS
+
+### Detection of potential outliers 
+Plotting scatterplots to visualize relationship and identify potential outliers
+
+Frontal GM (no outliers)
+```{r}
+plot(eprimeStruct$FrontalGMbyTBV)
+```
+
+Temp GM - 1 obvious outlier 
+```{r}
+plot(eprimeStruct$TempGMbyTBV)
+```
+
+Hippocampus- no obvious outlier 
+```{r}
+plot(eprimeStruct$HippocampusByTBV)
+```
+
+
+Amygdala - 1 obvious outlier 
+```{r}
+plot(eprimeStruct$AmygdalabyTBV)
+```
+
+Thalamus - 1 obvious outlier 
+```{r}
+plot(eprimeStruct$ThalamusbyTBV)
+```
+
+GA - no obvious outliers
+```{r}
+plot(eprimeStruct$GA)
+```
+
+PMA - no obvious outlier
+```{r}
+plot(eprimeStruct$PMA)
+```
+
+SES - no obvious outlier
+```{r}
+plot(eprimeStruct$IMD_SES)
+```
+
+Maternal age - no obvious outlier
+```{r}
+plot(eprimeStruct$MAT_AGE)
+```
+
+Days TPN - 1 obvious outlier
+```{r}
+plot(eprimeStruct$DAYS_TPN)
+```
+
+A few potential outliers (~3 - as this is a main variable of interest (and we actually are interested in high levels of stress) - we will keep this in the model and only remove if it affects assumptions)
+```{r}
+plot(eprimeStruct$EventSum)
+```
+
+Trait anxiety - No obvious outliers
+```{r}
+plot(eprimeStruct$STAI_TRSum)
+```
+
+Total brain volume - no obvious outliers
+```{r}
+plot(eprimeStruct$TBV_volume)
+```
+
+### Removal of outliers  
+
+We are removing the outlier for Days TPN, as this baby was likely to have been very sick (also this outlier will be present in ALL models). As mentioned above, the "Event Sum" outlier will only be removed if it affects assumptions (and in that case, we will do sensitivity analysis with and without the outliers). 
+The outliers for brain volumes will be removed for each individual model. 
+
+Removing outlier for Days TPN 
+```{r}
+eprimeStruct2 <- subset(eprimeStruct, DAYS_TPN<50)
+write.csv(eprimeStruct2, "eprimeStruct2.csv")
+```
+
+## OTHER
+
+First, I am checking the structure of dataframe. 
+I have hidden the results of this command as the table is very long. It tells me the types of data I have (i.e. ID=factor, GA=numeric etc). Some need to be changed, which will be done in the next command.
+```{r results="hide"}
+str(eprimeStruct2) 
+```
+
+Changing data type where needed
+```{r}
+eprimeStruct2$ID <-as.character(eprimeStruct2$ID)
+```
+
+```{r}
+eprimeStruct2$SEX<-factor(eprimeStruct2$SEX, levels=c(1,2),labels=c("Male","Female"))
+```
+
+### Checking correlation for total brain volume
+(as all volumes are relative to this)
+
+Report direct correlation (without exact=F, it gives an error because spearman cannot compute exact p values, so we need to tell it that approximate values are fine)
+```{r}
+cor.TBVandEvent <- cor.test(eprimeStruct2$TBV_volume, eprimeStruct2$EventSum, 
+                            method="spearman",exact=F) 
+cor.TBVandEvent 
+cor.TBVandSTAI <- cor.test(eprimeStruct2$TBV_volume, eprimeStruct2$STAI_TRSum, 
+                           method="spearman",exact=F)
+cor.TBVandSTAI
+```
+
+# FITTING REGRESSION MODELS 
+
+## FRONTAL GM BY TBV
+
+No outliers to remove. Can fit regression line. 
+
+Fitting the regression line for main model
+```{r}
+regression.FrontalGMbyTBV <-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                 MAT_AGE+IMD_SES+SEX+DAYS_TPN,data=eprimeStruct2)
+```
+
+Fitting regression line for alternative model 
+```{r}
+regression.FrontalGMbyTBV_noAnx <-lm(formula=FrontalGMbyTBV~GA+PMA+
+                                       MAT_AGE+IMD_SES+SEX+DAYS_TPN, 
+                                     data=eprimeStruct2)
+```
+
+## TEMP GM BY TBV
+
+As on scatterplots, one outlier was obvious (volume >.11), this was removed before continuing the analysis. 
+
+```{r}
+eprimeStruct2Temp<- subset(eprimeStruct2, TempGMbyTBV <.11)
+```
+
+Fitting the regression line for main model
+```{r}
+regression.TempGMbyTBV <-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                              MAT_AGE+IMD_SES+SEX+DAYS_TPN,data=eprimeStruct2Temp)
+```
+
+Fitting the regression line for alternative model 
+```{r}
+regression.TempGMbyTBV_noAnx <-lm(formula=TempGMbyTBV~GA+PMA+
+                                    MAT_AGE+IMD_SES+SEX+DAYS_TPN,data=eprimeStruct2Temp) 
+```
+
+## THALAMUS BY TBV
+
+As one outlier was evident on scatterplot, this was removed before continuing 
+```{r}
+eprimeStruct2Thal<- subset(eprimeStruct2, ThalamusbyTBV >.018)
+```
+
+Fitting the regression line for main model 
+```{r}
+regression.ThalamusbyTBV <-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                MAT_AGE+IMD_SES+SEX+DAYS_TPN, data=eprimeStruct2Thal)
+```
+
+Fitting the regression line for alternative model 
+```{r}
+regression.ThalamusbyTBV_noAnx <-lm(formula=ThalamusbyTBV~GA+PMA+
+                                      MAT_AGE+IMD_SES+SEX+DAYS_TPN, 
+                                    data=eprimeStruct2Thal)
+```
+
+## AMYGDALA BY TBV
+
+As one outlier was evident on scatterplot, this was removed before continuing
+```{r}
+eprimeStruct2Amyg<- subset(eprimeStruct2, AmygdalabyTBV <.0033)
+```
+
+Fitting the regression line for main model 
+```{r}
+regression.AmygdalabyTBV <-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                MAT_AGE+IMD_SES+SEX+DAYS_TPN, data=eprimeStruct2Amyg) 
+```
+
+Fitting the regression line for alternative model 
+```{r}
+regression.AmygdalabyTBV_noAnx <-lm(formula=AmygdalabyTBV~GA+PMA+
+                                      MAT_AGE+IMD_SES+SEX+DAYS_TPN,
+                                    data=eprimeStruct2Amyg) 
+```
+
+## HIPPOCAMPUS BY TBV
+
+Fitting the regression line for main model 
+```{r}
+regression.HippocampusByTBV <-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+
+                                   MAT_AGE+IMD_SES+SEX+DAYS_TPN,
+                                 data=eprimeStruct2) 
+```
+
+Fitting the regression line for alternative model 
+```{r}
+regression.HippocampusByTBV_noAnx <-lm(formula=HippocampusByTBV~GA+PMA+
+                                         MAT_AGE+IMD_SES+SEX+DAYS_TPN,
+                                       data=eprimeStruct2) 
+```
+
+# CHECKING ASSUMPTIONS FOR MULTIPLE REGRESSION 
+
+## ASSUMPTIONS - FRONTAL GM  
+Check residuals from model results (below)- median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data - Cook's distance (>1 outlier and high leverage)
+```{r}
+plot(x=regression.FrontalGMbyTBV, which=4)
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.FrontalGMbyTBV), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Check Shapiro-Wilk (not significant, normality assumption is met) 
+```{r}
+shapiro.test(residuals(regression.FrontalGMbyTBV)) 
+```
+
+Check linearity of relationship 
+plots residuals vs fitted (ideally, straight horizontal line)
+```{r}
+plot(x=regression.FrontalGMbyTBV, which=1)  
+```
+
+Plot similar to above but for each individual predictor (Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.FrontalGMbyTBV) 
+```
+
+
+Check normality assumptions - plot normal Q-Q (Check that follows the line - if yes, met) 
+```{r}
+plot(x=regression.FrontalGMbyTBV, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location (Ideally straight, horizontal line)
+```{r}
+plot(x=regression.FrontalGMbyTBV, which=3) 
+```
+
+Non-constant variance score (needs to be non-significant) 
+```{r}
+ncvTest(regression.FrontalGMbyTBV) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.FrontalGMbyTBV)
+```
+
+ALL ASSUMPTIONS MET FOR FRONTAL GM BY TBV 
+
+## ASSUMPTIONS - TEMPORAL GM 
+
+First, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data 
+Plot Cook's distance - check if any is greater than 1 
+```{r}
+plot(x=regression.TempGMbyTBV, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.TempGMbyTBV), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro- Wilk -- not significant, assumption is met 
+```{r}
+shapiro.test(residuals(regression.TempGMbyTBV))
+```
+
+Qnorm - check that it follows the line
+```{r}
+qqnorm(residuals(regression.TempGMbyTBV))
+```
+
+Check linearity of relationship - plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.TempGMbyTBV, which=1)
+```
+
+Similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.TempGMbyTBV) 
+```
+
+Check normality assumptions
+
+Plot normal Q-Q - check that follows the line - if yes, met
+```{r}
+plot(x=regression.TempGMbyTBV, which=2) 
+```
+
+Check homogeneity of variance - plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.TempGMbyTBV, which=3) 
+```
+
+NCV test - needs to be non-significant 
+```{r}
+ncvTest(regression.TempGMbyTBV) 
+```
+
+If violated, do coeftest below and use these values instead
+```{r}
+coeftest(regression.TempGMbyTBV, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.TempGMbyTBV)
+```
+
+Met all assumptions except for homogeneity of variance. Need to use results from vcov=hccm instead. 
+
+
+## ASSUMPTIONS - THALAMUS 
+
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.ThalamusbyTBV, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.ThalamusbyTBV), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro test - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.ThalamusbyTBV)) 
+```
+
+Qqnorm 
+```{r}
+qqnorm(residuals(regression.ThalamusbyTBV))
+```
+
+Check linearity of relationship
+Plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.ThalamusbyTBV, which=1)  
+```
+
+Similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.ThalamusbyTBV) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.ThalamusbyTBV, which=2) 
+```
+
+Check homogeneity of variance 
+Plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.ThalamusbyTBV, which=3) 
+```
+
+NCV test needs to be non-significant
+```{r}
+ncvTest(regression.ThalamusbyTBV)
+```
+
+If violated, do coeftest( vcov=hccm) and use these instead
+```{r}
+coeftest(regression.ThalamusbyTBV, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.ThalamusbyTBV)
+```
+ 
+Met all assumptions
+
+## ASSUMPTIONS - AMYGDALA
+
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.AmygdalabyTBV, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.AmygdalabyTBV), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro test- not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.AmygdalabyTBV)) 
+```
+
+Qqnorm plot 
+```{r}
+qqnorm(residuals(regression.AmygdalabyTBV))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.AmygdalabyTBV, which=1) 
+```
+
+Similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.AmygdalabyTBV) 
+```
+
+Check normality assumptions
+
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.AmygdalabyTBV, which=2) 
+```
+
+Check homogeneity of variance 
+Plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.AmygdalabyTBV, which=3) 
+```
+
+NCV test - needs to be non-significant
+```{r}
+ncvTest(regression.AmygdalabyTBV) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.AmygdalabyTBV)
+```
+
+
+## ASSUMPTIONS - HIPPOCAMPUS 
+
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.HippocampusByTBV, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.HippocampusByTBV), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.HippocampusByTBV)) 
+```
+
+Qqnorm
+```{r}
+qqnorm(residuals(regression.HippocampusByTBV))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.HippocampusByTBV, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.HippocampusByTBV) 
+```
+
+Check normality assumptions
+Plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.HippocampusByTBV, which=2) 
+```
+
+Check homogeneity of variance 
+```{r}
+plot(x=regression.HippocampusByTBV, which=3) 
+```
+
+NCV test - needs to be non-significant 
+```{r}
+ncvTest(regression.HippocampusByTBV) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.HippocampusByTBV)
+```
+
+# GETTING MODEL RESULTS 
+
+## FRONTAL GM 
+
+### MAIN MODEL (Frontal GM)
+Get model results
+```{r}
+summary(regression.FrontalGMbyTBV)
+```
+
+Calculate confidence intervals:
+```{r}
+confint(object=regression.FrontalGMbyTBV, level=.95) 
+```
+
+Calculate coefficients 
+```{r}
+standardCoefs(regression.FrontalGMbyTBV)
+```
+
+
+### ALTERNATIVE MODEL (Frontal GM)
+
+Get model results 
+```{r}
+summary(regression.FrontalGMbyTBV_noAnx) 
+```
+
+Compare models (Remember that smaller AIC is better) 
+```{r}
+AIC(regression.FrontalGMbyTBV, regression.FrontalGMbyTBV_noAnx) 
+```
+
+### DIRECT CORRELATION (Frontal GM)
+
+```{r}
+str(eprimeStruct2)
+```
+
+
+```{r}
+cor.FrontalGMbyTBVandEvent <- cor.test(eprimeStruct2$FrontalGMbyTBV, 
+                                       eprimeStruct2$EventSum,
+                                       method="spearman",exact=F)  
+cor.FrontalGMbyTBVandEvent 
+cor.FrontalGMbyTBVandSTAI <- cor.test(eprimeStruct2$FrontalGMbyTBV, 
+                                      eprimeStruct2$STAI_TRSum, 
+                                      method="spearman",exact=F) 
+cor.FrontalGMbyTBVandSTAI
+```
+
+### PLOTS (Frontal GM)
+
+Plot stressful life events x frontal GM
+```{r}
+ggplot(eprimeStruct2, aes(x=eprimeStruct2$EventSum, 
+                         y=eprimeStruct2$FrontalGMbyTBV, 
+                         color=eprimeStruct2$SEX,shape=eprimeStruct2$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events", 
+                           limits=c(0,300), 
+                           breaks=c(0,50,100,150,200,250,300))+
+        scale_y_continuous(name="Frontal lobe volume", 
+                           limits=c(0.1308000,0.2081200))+
+  theme(axis.title=element_text(size=20))
+```
+
+Plot trait anxiety x frontal GM 
+```{r}
+ggplot(eprimeStruct2, aes(x=eprimeStruct2$STAI_TRSum,
+                         y=eprimeStruct2$FrontalGMbyTBV, color=eprimeStruct2$SEX,
+                         shape=eprimeStruct2$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", limits=c(20,70), 
+                           breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Frontal lobe volume",
+                           limits=c(0.1308000,0.2081200))+
+  theme(axis.title=element_text(size=20))
+```
+
+##  TEMPORAL GM
+
+### MAIN MODEL (Temporal GM)
+
+Model results
+```{r}
+summary(regression.TempGMbyTBV)
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.TempGMbyTBV, level=.95) 
+```
+
+Standardized coefficients 
+```{r}
+standardCoefs(regression.TempGMbyTBV)
+```
+
+### ALTERNATIVE MODEL (Temporal GM)
+
+Model results for alternative model 
+```{r}
+summary(regression.TempGMbyTBV_noAnx) 
+```
+
+Compare models. Remember that smaller AIC is better 
+```{r}
+AIC(regression.TempGMbyTBV, regression.TempGMbyTBV_noAnx) 
+```
+
+### DIRECT CORRELATION (Temporal GM)
+```{r}
+cor.TempGMbyTBVandEvent <- cor.test(eprimeStruct2Temp$TempGMbyTBV, 
+                                    eprimeStruct2Temp$EventSum, 
+                                    method="spearman",exact=F)  
+cor.TempGMbyTBVandEvent 
+cor.TempGMbyTBVandSTAI <- cor.test(eprimeStruct2Temp$TempGMbyTBV,
+                                   eprimeStruct2Temp$STAI_TRSum,
+                                   method="spearman",exact=F) 
+cor.TempGMbyTBVandSTAI
+```
+
+### PLOTS (Temporal GM)
+
+Plot for stressful life events (temporal GM)
+```{r}
+ggplot(eprimeStruct2Temp, aes(x=eprimeStruct2Temp$EventSum, 
+                         y=eprimeStruct2Temp$TempGMbyTBV, 
+                         color=eprimeStruct2Temp$SEX,
+                         shape=eprimeStruct2Temp$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events",
+                           limits=c(0,300), breaks=c(0,50,100,150,200,250,300))+
+        scale_y_continuous(name="Temporal lobe volume",
+                           limits=c(0.0766000,0.11620000))+
+  theme(axis.title=element_text(size=20))
+```
+
+Plot for trait anxiety (temporal GM)
+```{r}
+ggplot(eprimeStruct2Temp, aes(x=eprimeStruct2Temp$STAI_TRSum, 
+                              y=eprimeStruct2Temp$TempGMbyTBV, 
+                         color=eprimeStruct2Temp$SEX,
+                         shape=eprimeStruct2Temp$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", 
+                           limits=c(20,70), breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Temporal lobe volume",
+                           limits=c(0.0766000,0.11620000))+
+  theme(axis.title=element_text(size=20))
+```
+
+
+## THALAMUS 
+
+### MAIN MODEL (Thalamus)
+
+Model results 
+```{r}
+summary(regression.ThalamusbyTBV)
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.ThalamusbyTBV, level=.95) 
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.ThalamusbyTBV)
+```
+
+### ALTERNATIVE MODEL (Thalamus)
+
+Model results for alternative model 
+```{r}
+summary(regression.ThalamusbyTBV_noAnx) 
+```
+
+Compare models. Remember that smaller AIC is better 
+```{r}
+AIC(regression.ThalamusbyTBV, regression.ThalamusbyTBV_noAnx) 
+```
+
+### DIRECT CORRELATION (Thalamus)
+
+Report direct correlation 
+```{r}
+cor.ThalamusbyTBVandEvent <- cor.test(eprimeStruct2Thal$ThalamusbyTBV, 
+                                      eprimeStruct2Thal$EventSum,
+                                      method="spearman",exact=F)  
+cor.ThalamusbyTBVandEvent 
+cor.ThalamusbyTBVandSTAI <- cor.test(eprimeStruct2Thal$ThalamusbyTBV, 
+                                     eprimeStruct2Thal$STAI_TRSum,
+                                     method="spearman",exact=F) 
+cor.ThalamusbyTBVandSTAI
+
+```
+
+### PLOTS (Thalamus)
+
+Stressful life events - Thalamus by TBV plot
+
+```{r}
+ggplot(eprimeStruct2Thal, aes(x=eprimeStruct2Thal$EventSum,
+                              y=eprimeStruct2Thal$ThalamusbyTBV, 
+                         color=eprimeStruct2Thal$SEX,shape=eprimeStruct2Thal$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events", limits=c(0,300), 
+                           breaks=c(0,50,100,150,200,250,300))+
+        scale_y_continuous(name="Thalamus volume")+
+  theme(axis.title=element_text(size=20))
+```
+
+Trait anxiety -  Thalamus by TBV plot
+```{r}
+ggplot(eprimeStruct2Thal, aes(x=eprimeStruct2Thal$STAI_TRSum, 
+                              y=eprimeStruct2Thal$ThalamusbyTBV, 
+                         color=eprimeStruct2Thal$SEX,shape=eprimeStruct2Thal$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", limits=c(20,70), 
+                           breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Thalamus volume")+
+  theme(axis.title=element_text(size=20))
+
+```
+
+
+## AMYGDALA
+
+### MAIN MODEL (Amygdala)
+Model results 
+```{r}
+summary(regression.AmygdalabyTBV) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.AmygdalabyTBV, level=.95) 
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.AmygdalabyTBV) 
+```
+
+### ALTERNATIVE MODEL (Amygdala)
+
+Model results 
+```{r}
+summary(regression.AmygdalabyTBV_noAnx) 
+```
+
+Compare models - remember smaller AIC is better
+```{r}
+AIC(regression.AmygdalabyTBV, regression.AmygdalabyTBV_noAnx) 
+```
+
+### DIRECT CORRELATION (Amygdala)
+```{r}
+cor.AmygdalabyTBVandEvent <- cor.test(eprimeStruct2Amyg$AmygdalabyTBV, 
+                                      eprimeStruct2Amyg$EventSum, 
+                                      method="spearman",exact=F)  
+cor.AmygdalabyTBVandEvent 
+cor.AmygdalabyTBVandSTAI <- cor.test(eprimeStruct2Amyg$AmygdalabyTBV,
+                                     eprimeStruct2Amyg$STAI_TRSum,
+                                     method="spearman",exact=F) 
+cor.AmygdalabyTBVandSTAI
+```
+
+### PLOTS (Main sample, Amygdala)
+
+Stressful life events - Amygdala by TBV 
+```{r}
+ggplot(eprimeStruct2Amyg, aes(x=eprimeStruct2Amyg$EventSum,
+                              y=eprimeStruct2Amyg$AmygdalabyTBV, 
+                         color=eprimeStruct2Amyg$SEX,shape=eprimeStruct2Amyg$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events", limits=c(0,300),
+                           breaks=c(0,50,100,150,200,250,300))+
+        scale_y_continuous(name="Amygdala volume")+
+  theme(axis.title=element_text(size=20))
+```
+
+Trait anxiety - Amygdala by TBV
+```{r}
+ggplot(eprimeStruct2Amyg, aes(x=eprimeStruct2Amyg$STAI_TRSum,
+                              y=eprimeStruct2Amyg$AmygdalabyTBV,
+                         color=eprimeStruct2Amyg$SEX,shape=eprimeStruct2Amyg$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", limits=c(20,70),
+                           breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Amygdala volume")+
+  theme(axis.title=element_text(size=20))
+```
+
+
+## HIPPOCAMPUS 
+
+### MAIN MODEL (Hippocampus)
+
+Model results 
+```{r}
+summary(regression.HippocampusByTBV)
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.HippocampusByTBV, level=.95) 
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.HippocampusByTBV) 
+```
+
+### ALTERNATIVE MODEL (Hippocampus)
+
+Model results 
+```{r}
+summary(regression.HippocampusByTBV_noAnx) 
+```
+
+Compare models - remember smaller AIC is better
+```{r}
+AIC(regression.HippocampusByTBV, regression.HippocampusByTBV_noAnx) 
+```
+
+
+### DIRECT CORRELATION (Hippocampus)
+```{r}
+cor.HippocampusByTBVandEvent <- cor.test(eprimeStruct2$HippocampusByTBV,
+                                         eprimeStruct2$EventSum, 
+                                         method="spearman", exact=F)
+cor.HippocampusByTBVandEvent 
+cor.HippocampusByTBVandSTAI <- cor.test(eprimeStruct2$HippocampusByTBV, 
+                                        eprimeStruct2$STAI_TRSum,
+                                        method="spearman", exact=F) 
+cor.HippocampusByTBVandSTAI
+```
+
+### PLOTS (Hippocampus )
+
+Stressful life events - Hippocampus by TBV
+```{r}
+ggplot(eprimeStruct2, aes(x=eprimeStruct2$EventSum, y=eprimeStruct2$HippocampusByTBV, 
+                         color=eprimeStruct2$SEX,shape=eprimeStruct2$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events", limits=c(0,300),
+                           breaks=c(0,50,100,150,200,250,300))+
+        scale_y_continuous(name="Hippocampus volume")+
+  theme(axis.title=element_text(size=20))
+```
+
+Trait anxiety - Hippocampus by TBV 
+```{r}
+ggplot(eprimeStruct2, aes(x=eprimeStruct2$STAI_TRSum, 
+                          y=eprimeStruct2$HippocampusByTBV, 
+                         color=eprimeStruct2$SEX,shape=eprimeStruct2$SEX)) +
+        geom_point(size=2) + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", limits=c(20,70), 
+                           breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Hippocampus volume")+
+  theme(axis.title=element_text(size=20))
+```
+
+# SENSITIVITY ANALYSES 
+
+Based on the results of the assumptions checks, we are performing additional analyses removing outliers 
+
+## Repeating hippocampus analysis after removing outliers 
+
+```{r}
+rmOutliers_Hm1 <- subset(eprimeStruct2, EventSum <250)
+```
+
+Fitting regression line 
+```{r}
+regression.H1<-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+MAT_AGE+IMD_SES+SEX+DAYS_TPN,
+                  data=rmOutliers_Hm1)
+```
+
+Model results
+```{r}
+summary(regression.H1) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.H1, level=.95)  
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.H1) 
+```
+
+Correlation
+```{r}
+cor.Hippocampus2Stress <- cor.test(rmOutliers_Hm1$HippocampusByTBV,
+                                   rmOutliers_Hm1$EventSum,
+                                   method="spearman",exact=F) 
+cor.Hippocampus2Stress
+cor.Hippocampus2STAI <- cor.test(rmOutliers_Hm1$HippocampusByTBV, 
+                                 rmOutliers_Hm1$STAI_TRSum,
+                                 method="spearman",exact=F)
+cor.Hippocampus2STAI
+```
+
+### PLOTS (Hippocampus model without outliers)
+
+Stressful life events - Hippocampus relative to TBV 
+```{r}
+ggplot(rmOutliers_Hm1, aes(x=rmOutliers_Hm1$EventSum, 
+                           y=rmOutliers_Hm1$HippocampusByTBV, 
+                         color=rmOutliers_Hm1$SEX,shape=rmOutliers_Hm1$SEX)) +
+        geom_point() + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events", limits=c(0,250), 
+                           breaks=c(0,50,100,150,200,250))+
+        scale_y_continuous(name="Hippocampus volume")
+```
+
+Trait anxiety - Hippocampus by TBV 
+```{r}
+ggplot(rmOutliers_Hm1, aes(x=rmOutliers_Hm1$STAI_TRSum, 
+                           y=rmOutliers_Hm1$HippocampusByTBV, 
+                         color=rmOutliers_Hm1$SEX,shape=rmOutliers_Hm1$SEX)) +
+        geom_point() + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", limits=c(20,70), 
+                           breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Hippocampus volume")
+```
+
+
+### ASSUMPTIONS (Hippocampus model without outliers)
+
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.H1, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.H1), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.H1)) 
+```
+
+Qqnorm
+```{r}
+qqnorm(residuals(regression.H1))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.H1, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.H1) 
+```
+
+Check normality assumptions
+
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.H1, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.H1, which=3) 
+```
+
+NCV test needs to be non-significant
+```{r}
+ncvTest(regression.H1) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.H1)
+```
+
+
+### ALTERNATIVE MODEL (Hippocampus model without outliers)
+Fitting the regression line 
+```{r}
+regression.H1_noAnx <-lm(formula=HippocampusByTBV~GA+PMA+MAT_AGE+
+                           IMD_SES+SEX+DAYS_TPN, data=rmOutliers_Hm1) 
+```
+
+Model results 
+```{r}
+summary(regression.H1_noAnx) 
+```
+
+AIC
+```{r}
+AIC(regression.H1_noAnx, regression.H1) 
+```
+
+
+## Repeating amygdala analysis after removing outliers 
+
+```{r}
+rmOutliers_Am1 <- subset(eprimeStruct2Amyg, EventSum <250)
+```
+Fitting regression line 
+```{r}
+regression.Am1<-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+MAT_AGE+
+                     IMD_SES+SEX+DAYS_TPN,
+                  data=rmOutliers_Am1)
+```
+Model results
+```{r}
+summary(regression.Am1) 
+```
+Confidence intervals 
+```{r}
+confint(object=regression.Am1, level=.95)  
+```
+Coefficients
+```{r}
+standardCoefs(regression.Am1) 
+```
+
+### PLOTS (Amygdala model without outliers)
+
+Stressful life events - Amygdala relative to TBV 
+```{r}
+ggplot(rmOutliers_Am1, aes(x=rmOutliers_Am1$EventSum,
+                           y=rmOutliers_Am1$AmygdalabyTBV, 
+                         color=rmOutliers_Am1$SEX,shape=rmOutliers_Am1$SEX)) +
+        geom_point() + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Stressful events", limits=c(0,250),
+                           breaks=c(0,50,100,150,200,250))+
+        scale_y_continuous(name="Amygdala volume")
+```
+
+Trait anxiety -Amygdala by TBV 
+```{r}
+ggplot(rmOutliers_Am1, aes(x=rmOutliers_Am1$STAI_TRSum,
+                           y=rmOutliers_Am1$AmygdalabyTBV, 
+                         color=rmOutliers_Am1$SEX,shape=rmOutliers_Am1$SEX)) +
+        geom_point() + 
+        geom_smooth(method=lm)+ 
+        scale_colour_manual(values=c("#1E434C","#C99E10"))+ 
+        labs(colour="Sex", shape="Sex")+
+        scale_x_continuous(name="Trait Anxiety", limits=c(20,70),
+                           breaks=c(20,30,40,50,60,70))+
+        scale_y_continuous(name="Amygdala volume")
+```
+
+### ASSUMPTIONS (Amygdala model without outliers)
+
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.Am1, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.Am1), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.Am1)) 
+```
+
+Qqnorm
+```{r}
+qqnorm(residuals(regression.Am1))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.Am1, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.Am1) 
+```
+
+Check normality assumptions
+
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.Am1, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.Am1, which=3) 
+```
+
+NCV test needs to be non-significant
+```{r}
+ncvTest(regression.Am1) 
+```
+
+As this was violated, do coeftest(vcov=hccm) and use these instead
+```{r}
+coeftest(regression.Am1, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.Am1)
+```
+
+## Repeating thalamus analysis after removing outliers 
+
+```{r}
+rmOutliers_Thal1 <- subset(eprimeStruct2Thal, EventSum <250)
+```
+
+Fitting regression line 
+```{r}
+regression.Thal1<-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+MAT_AGE+
+                       IMD_SES+SEX+DAYS_TPN,data=rmOutliers_Thal1)
+```
+
+Model results
+```{r}
+summary(regression.Thal1) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.Thal1, level=.95)  
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.Thal1) 
+```
+
+### ASSUMPTIONS (Thalamus model without outliers)
+
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.Thal1, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.Thal1), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.Thal1)) 
+```
+
+Qqnorm
+```{r}
+qqnorm(residuals(regression.Thal1))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.Thal1, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.Thal1) 
+```
+
+Check normality assumptions
+
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.Thal1, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.Thal1, which=3) 
+```
+
+NCV test needs to be non-significant
+```{r}
+ncvTest(regression.Thal1) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.Thal1)
+```
+
+## Repeating Temporal GM analysis after removing outliers 
+
+```{r}
+rmOutliers_Temp1 <- subset(eprimeStruct2Temp, EventSum <250)
+```
+
+Fitting regression line 
+```{r}
+regression.Temp1<-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+MAT_AGE+
+                       IMD_SES+SEX+DAYS_TPN,data=rmOutliers_Temp1)
+```
+
+Model results
+```{r}
+summary(regression.Temp1) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.Temp1, level=.95)  
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.Temp1) 
+```
+
+### ASSUMPTIONS (Temporal model without outliers)
+
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.Temp1, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.Temp1), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.Temp1)) 
+```
+
+Qqnorm
+```{r}
+qqnorm(residuals(regression.Temp1))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.Temp1, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.Temp1) 
+```
+
+Check normality assumptions
+
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.Temp1, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.Temp1, which=3) 
+```
+
+NCV test needs to be non-significant
+```{r}
+ncvTest(regression.Temp1) 
+```
+
+As this was violated, do coeftest(vcov=hccm) and use these instead
+```{r}
+coeftest(regression.Temp1, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.Temp1)
+```
+
+## Repeating Frontal GM analysis after removing outliers 
+
+```{r}
+rmOutliers_Front1 <- subset(eprimeStruct2, EventSum <250)
+```
+
+Fitting regression line 
+```{r}
+regression.Front1<-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+MAT_AGE+
+                        IMD_SES+SEX+DAYS_TPN,data=rmOutliers_Temp1)
+```
+
+Model results
+```{r}
+summary(regression.Front1) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.Front1, level=.95)  
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.Front1) 
+```
+
+### ASSUMPTIONS (Frontal model without outliers)
+
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.Front1, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.Front1), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.Front1)) 
+```
+
+Qqnorm
+```{r}
+qqnorm(residuals(regression.Front1))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.Front1, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.Front1) 
+```
+
+Check normality assumptions
+
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.Front1, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.Front1, which=3) 
+```
+
+NCV test needs to be non-significant
+```{r}
+ncvTest(regression.Front1) 
+```
+
+As this was violated, do coeftest(vcov=hccm) and use these instead
+```{r}
+coeftest(regression.Front1, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.Front1)
+```
+
+***
+# EXPLORATORY ANALYSIS BY GENDER (OUTLIERS REMOVED)
+
+## FRONTAL GM BY GENDER
+Subsetting by gender 
+```{r}
+eprimeMalesF <- subset(rmOutliers_Front1, SEX=="Male")
+eprimeFemalesF <- subset(rmOutliers_Front1, SEX=="Female")
+```
+
+### FEMALES (FRONTAL GM)
+
+#### MAIN MODEL (Females, Frontal GM)
+Main model 
+Fitting the regression line 
+```{r}
+regression.FrontalGMbyTBV_females <-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN, data=eprimeFemalesF) 
+```
+
+Model results
+```{r}
+summary(regression.FrontalGMbyTBV_females) 
+```
+
+Confidence intervals
+```{r}
+confint(object=regression.FrontalGMbyTBV_females, level=.95) 
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.FrontalGMbyTBV_females)
+```
+
+#### ASSUMPTIONS (Females, Frontal GM)
+
+Report assumptions for main model 
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.FrontalGMbyTBV_females, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.FrontalGMbyTBV_females), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro test - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.FrontalGMbyTBV_females)) 
+```
+
+Check linearity of relationship 
+```{r}
+plot(x=regression.FrontalGMbyTBV_females, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.FrontalGMbyTBV_females) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.FrontalGMbyTBV_females, which=2) 
+```
+
+Check homogeneity of variance 
+```{r}
+plot(x=regression.FrontalGMbyTBV_females, which=3) 
+```
+
+NCV test - needs to be non-significant
+```{r}
+ncvTest(regression.FrontalGMbyTBV_females) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.FrontalGMbyTBV_females)
+```
+
+### MALES - FRONTAL GM
+
+#### MAIN MODEL (Males, Frontal GM)
+Main model 
+Fitting the regression line 
+```{r}
+regression.FrontalGMbyTBV_males <-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                       MAT_AGE+IMD_SES+DAYS_TPN,
+                                     data=eprimeMalesF) 
+```
+
+Model results 
+```{r}
+summary(regression.FrontalGMbyTBV_males) 
+```
+
+Confidence intervals
+```{r}
+confint(object=regression.FrontalGMbyTBV_males, level=.95)
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.FrontalGMbyTBV_males) 
+```
+
+#### ASSUMPTIONS (Males, Frontal GM)
+Report assumptions for main model 
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.FrontalGMbyTBV_males, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.FrontalGMbyTBV_males), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro wilk -not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.FrontalGMbyTBV_males)) 
+```
+
+Check linearity of relationship -plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.FrontalGMbyTBV_males, which=1) 
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)'
+```{r}
+residualPlots(model=regression.FrontalGMbyTBV_males) 
+```
+
+Check normality assumptions -plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.FrontalGMbyTBV_males, which=2) 
+```
+
+Check homogeneity of variance -plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.FrontalGMbyTBV_males, which=3) 
+```
+
+NCV test- needs to be non-significant
+```{r}
+ncvTest(regression.FrontalGMbyTBV_males) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.FrontalGMbyTBV_males)
+```
+
+
+## TEMPORAL GM BY GENDER
+
+Subsetting 
+```{r}
+eprimeMalesT <- subset(rmOutliers_Temp1, SEX=="Male")
+eprimeFemalesT <- subset(rmOutliers_Temp1, SEX=="Female")
+```
+
+
+### FEMALES (TEMPORAL GM)
+
+#### MAIN MODEL (Females, Temp GM)
+Main model
+Fitting the regression line 
+```{r}
+regression.TempGMbyTBV_females <-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                      MAT_AGE+IMD_SES+DAYS_TPN,
+                                    data=eprimeFemalesT) 
+```
+
+Model results
+```{r}
+summary(regression.TempGMbyTBV_females) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.TempGMbyTBV_females, level=.95) 
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.TempGMbyTBV_females) 
+```
+
+#### ASSUMPTIONS (Females, Temp GM)
+
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data
+
+If any is greater than 1, that's bad (large Cook's distance = outlier and high leverage)
+```{r}
+cooks.distance(model=regression.TempGMbyTBV_females)  
+```
+
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.TempGMbyTBV_females, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.TempGMbyTBV_females), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro test - not significant - normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.TempGMbyTBV_females)) 
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.TempGMbyTBV_females, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.TempGMbyTBV_females) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.TempGMbyTBV_females, which=2)
+```
+
+Check homogeneity of variance -plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.TempGMbyTBV_females, which=3) 
+```
+
+NCV test - needs to be non-significant
+```{r}
+ncvTest(regression.TempGMbyTBV_females) 
+```
+
+If violated, do coeftest(vcov=hccm) and use these instead
+```{r}
+coeftest(regression.TempGMbyTBV_females, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.TempGMbyTBV_females)
+```
+
+
+### MALES - TEMPORAL GM 
+
+#### MAIN MODEL (Males, Temp GM)
+
+Fitting the regression line 
+```{r}
+regression.TempGMbyTBV_males <-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                    MAT_AGE+IMD_SES+DAYS_TPN, data=eprimeMalesT) 
+```
+
+Model results 
+```{r}
+summary(regression.TempGMbyTBV_males) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.TempGMbyTBV_males, level=.95) 
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.TempGMbyTBV_males)
+```
+
+#### ASSUMPTIONS (Males, Temp GM)
+Report assumptions for main model 
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.TempGMbyTBV_males, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.TempGMbyTBV_males), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.TempGMbyTBV_males)) 
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.TempGMbyTBV_males, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.TempGMbyTBV_males) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.TempGMbyTBV_males, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.TempGMbyTBV_males, which=3) 
+```
+
+NCV test - needs to be non-significant
+```{r}
+ncvTest(regression.TempGMbyTBV_males)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.TempGMbyTBV_males)
+```
+
+If violated, do coeftest(vcov=hccm) and use these instead
+```{r}
+coeftest(regression.TempGMbyTBV_males, vcov=hccm)
+```
+
+## AMYGDALA BY GENDER
+Subsetting 
+```{r}
+eprimeMalesA <- subset(rmOutliers_Am1, SEX=="Male")
+eprimeFemalesA <- subset(rmOutliers_Am1, SEX=="Female")
+```
+
+### FEMALES (AMYGDALA)
+
+#### MAIN MODEL (Females, Amygdala)
+Fitting the regression line 
+```{r}
+regression.AmygdalabyTBV_females <-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                        MAT_AGE+IMD_SES+DAYS_TPN, data=eprimeFemalesA) 
+```
+
+Model results
+```{r}
+summary(regression.AmygdalabyTBV_females) 
+```
+
+Confidence intervals
+```{r}
+confint(object=regression.AmygdalabyTBV_females, level=.95) 
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.AmygdalabyTBV_females)
+```
+
+#### ASSUMPTIONS (Females, Amygdala)
+
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.AmygdalabyTBV_females, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.AmygdalabyTBV_females), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.AmygdalabyTBV_females)) 
+```
+
+Check linearity of relationship
+Plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.AmygdalabyTBV_females, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.AmygdalabyTBV_females) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.AmygdalabyTBV_females, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.AmygdalabyTBV_females, which=3) 
+```
+
+NCV test - needs to be non-significant 
+```{r}
+ncvTest(regression.AmygdalabyTBV_females) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.AmygdalabyTBV_females)
+```
+
+### MALES (AMYGDALA)
+
+#### MAIN MODEL (Males, Amygdala)
+
+Fitting the regression line 
+```{r}
+regression.AmygdalabyTBV_males <-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                      MAT_AGE+IMD_SES+DAYS_TPN,
+                                    data=eprimeMalesA) 
+```
+
+Model results 
+```{r}
+summary(regression.AmygdalabyTBV_males) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.AmygdalabyTBV_males, level=.95)
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.AmygdalabyTBV_males) 
+```
+
+#### ASSUMPTIONS (Males, Amygdala)
+
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data - plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.AmygdalabyTBV_males, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.AmygdalabyTBV_males), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro - not significant - normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.AmygdalabyTBV_males))
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.AmygdalabyTBV_males, which=1)  
+```
+
+Similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.AmygdalabyTBV_males) 
+```
+
+Check normality assumptions
+Plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.AmygdalabyTBV_males, which=2) 
+```
+
+Check homogeneity of variance -plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.AmygdalabyTBV_males, which=3) 
+```
+
+NCV test - needs to be non-significant 
+```{r}
+ncvTest(regression.AmygdalabyTBV_males) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.AmygdalabyTBV_males)
+```
+
+## THALAMUS BY GENDER
+
+Subsetting
+```{r}
+eprimeMalesTh <- subset(rmOutliers_Thal1, SEX=="Male")
+eprimeFemalesTh <- subset(rmOutliers_Thal1, SEX=="Female")
+```
+
+### FEMALES (THALAMUS)
+
+#### MAIN MODEL (Females, Thalamus)
+
+Fitting the regression line 
+```{r}
+regression.ThalamusbyTBV_females <-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                        MAT_AGE+IMD_SES+DAYS_TPN,
+                                      data=eprimeFemalesTh) 
+```
+
+Model results 
+```{r}
+summary(regression.ThalamusbyTBV_females)
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.ThalamusbyTBV_females, level=.95) 
+```
+
+Coefficients
+```{r}
+standardCoefs(regression.ThalamusbyTBV_females)
+```
+
+#### ASSUMPTIONS (Females, Thalamus)
+
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data - plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.ThalamusbyTBV_females, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.ThalamusbyTBV_females), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro test - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.ThalamusbyTBV_females)) 
+```
+
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.ThalamusbyTBV_females, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.ThalamusbyTBV_females) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.ThalamusbyTBV_females, which=2) 
+```
+
+Check homogeneity of variance -plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.ThalamusbyTBV_females, which=3) 
+```
+
+NCV test - needs to be non-significant
+```{r}
+ncvTest(regression.ThalamusbyTBV_females) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.ThalamusbyTBV_females)
+```
+
+### MALES (THALAMUS)
+
+#### MAIN MODEL (Males, Thalamus)
+Fitting the regression line 
+```{r}
+regression.ThalamusbyTBV_males <-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                      MAT_AGE+IMD_SES+DAYS_TPN,
+                                    data=eprimeMalesTh) 
+```
+
+Model results 
+```{r}
+summary(regression.ThalamusbyTBV_males)
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.ThalamusbyTBV_males, level=.95) 
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.ThalamusbyTBV_males) 
+```
+
+#### ASSUMPTION (Males, Thalamus)
+Report assumptions for main model 
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data
+plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.ThalamusbyTBV_males, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.ThalamusbyTBV_males), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro-test - not significant, normality assumption is met 
+```{r}
+shapiro.test(residuals(regression.ThalamusbyTBV_males)) 
+```
+
+Check linearity of relationship
+plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.ThalamusbyTBV_males, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.ThalamusbyTBV_males) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.ThalamusbyTBV_males, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location. Ideally straight, horizontal line 
+```{r}
+plot(x=regression.ThalamusbyTBV_males, which=3) 
+```
+
+NCV test - needs to be non-significant 
+```{r}
+ncvTest(regression.ThalamusbyTBV_males) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.ThalamusbyTBV_males)
+```
+
+
+## HIPPOCAMPUS BY GENDER
+
+Subsetting
+```{r}
+eprimeMalesH <- subset(rmOutliers_Hm1, SEX=="Male")
+eprimeFemalesH <- subset(rmOutliers_Hm1, SEX=="Female")
+```
+
+### FEMALES (HIPPOCAMPUS)
+
+#### MAIN MODEL (Females, hippocampus)
+Fitting the regression line 
+```{r}
+regression.HippocampusByTBV_females <-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+
+                                           MAT_AGE+IMD_SES+DAYS_TPN,
+                                         data=eprimeFemalesH) 
+```
+
+Model results
+```{r}
+summary(regression.HippocampusByTBV_females) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.HippocampusByTBV_females, level=.95)
+```
+
+Coefficients 
+```{r}
+standardCoefs(regression.HippocampusByTBV_females)
+```
+
+#### ASSUMPTIONS (Females, Hippocampus)
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data - plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.HippocampusByTBV_females, which=4) 
+```
+
+Check normality of residuals 
+```{r}
+hist(x=residuals(regression.HippocampusByTBV_females), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.HippocampusByTBV_females)) 
+```
+
+Check linearity of relationship
+Plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.HippocampusByTBV_females, which=1)  
+```
+
+Similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.HippocampusByTBV_females) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.HippocampusByTBV_females, which=2) 
+```
+
+Check homogeneity of variance - plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.HippocampusByTBV_females, which=3)
+```
+
+NCV test - needs to be non-significant 
+```{r}
+ncvTest(regression.HippocampusByTBV_females) 
+```
+
+If violated, do coeftest(vcov=hccm) and use these instead
+```{r}
+coeftest(regression.HippocampusByTBV_females, vcov=hccm)
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.HippocampusByTBV_females)
+```
+
+### MALES (HIPPOCAMPUS) 
+
+#### MAIN MODEL (Males, Hippocampus)
+
+Fitting the regression line 
+```{r}
+regression.HippocampusByTBV_males <-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN, data=eprimeMalesH) 
+```
+
+Model results 
+```{r}
+summary(regression.HippocampusByTBV_males) 
+```
+
+Confidence intervals 
+```{r}
+confint(object=regression.HippocampusByTBV_males, level=.95)
+```
+
+Standardized coefficients 
+```{r}
+standardCoefs(regression.HippocampusByTBV_males)
+```
+
+#### ASSUMPTIONS (Males, Hippocampus)
+
+Report assumptions for main model 
+first, check residuals - median should be close to 0. If not, assumptions might be violated. 
+Check anomalous data -plots Cook's distance  - check if any is greater than 1
+```{r}
+plot(x=regression.HippocampusByTBV_males, which=4) 
+```
+
+check normality of residuals 
+```{r}
+hist(x=residuals(regression.HippocampusByTBV_males), 
+     xlab="Value of residual",
+     main="",
+     breaks=20) 
+```
+
+Shapiro - not significant, normality assumption is met
+```{r}
+shapiro.test(residuals(regression.HippocampusByTBV_males)) 
+```
+
+Check linearity of relationship
+Plots residuals vs fitted. ideally, straight horizontal line
+```{r}
+plot(x=regression.HippocampusByTBV_males, which=1)  
+```
+
+similar to above but for each predictor. Check p values, if significant, curvature is significant and it's bad ( but use judgment)
+```{r}
+residualPlots(model=regression.HippocampusByTBV_males) 
+```
+
+Check normality assumptions
+plots normal Q-Q. Check that follows the line - if yes, met
+```{r}
+plot(x=regression.HippocampusByTBV_males, which=2) 
+```
+
+Check homogeneity of variance 
+plots scale-location . Ideally straight, horizontal line
+```{r}
+plot(x=regression.HippocampusByTBV_males, which=3) 
+```
+
+NCV test - needs to be non-significant
+```{r}
+ncvTest(regression.HippocampusByTBV_males) 
+```
+
+Check for collinearity (needs to be low - around 1)
+```{r}
+vif(mod=regression.HippocampusByTBV_males)
+```
+
+# PARTIAL REGRESSION SCATTERPLOTS
+
+```{r}
+Model1Frontal <-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                   data=eprimeStruct2)
+residuals.Model1Frontal <- residuals(Model1Frontal)
+
+Model2Frontal <- lm(formula=EventSum~STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2)
+residuals.Model2Frontal <- residuals(Model2Frontal)
+
+NEWDFFrontal<-data.frame(RES1=residuals.Model1Frontal,
+                         RES2=residuals.Model2Frontal)
+PartialPlotFrontal <- ggplot(data=NEWDFFrontal, aes(x=residuals.Model2Frontal, y=residuals.Model1Frontal))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Stressful events", 
+                                                     y="Frontal lobe volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotFrontal
+```
+
+```{r}
+Model3Frontal <-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                   data=eprimeStruct2)
+residuals.Model3Frontal <- residuals(Model3Frontal)
+
+Model4Frontal <- lm(formula=STAI_TRSum~EventSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2)
+residuals.Model4Frontal <- residuals(Model4Frontal)
+
+NEWDFFrontal3<-data.frame(RES3=residuals.Model3Frontal, 
+                          RES4=residuals.Model4Frontal)
+PartialPlotFrontal3 <- ggplot(data=NEWDFFrontal3, aes(x=residuals.Model4Frontal, y=residuals.Model3Frontal))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Trait Anxiety", 
+                                                     y="Frontal lobe volume", 
+                                                     cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+
+  theme(axis.title=element_text(size=15))
+PartialPlotFrontal3
+```
+
+```{r}
+Model1Temporal <-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2Temp)
+residuals.Model1Temporal <- residuals(Model1Temporal)
+
+Model2Temporal <- lm(formula=EventSum~STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX,
+                     data=eprimeStruct2Temp)
+residuals.Model2Temporal <- residuals(Model2Temporal)
+
+NEWDFTemporal<-data.frame(RES1=residuals.Model1Temporal,
+                          RES2=residuals.Model2Temporal)
+PartialPlotTemporal <- ggplot(data=NEWDFTemporal, aes(x=residuals.Model2Temporal, y=residuals.Model1Temporal))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Stressful events", 
+                                                     y="Temporal lobe volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotTemporal
+```
+
+```{r}
+Model3Temporal <-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2Temp)
+residuals.Model3Temporal <- residuals(Model3Temporal)
+
+Model4Temporal <- lm(formula=STAI_TRSum~EventSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                     data=eprimeStruct2Temp)
+residuals.Model4Temporal <- residuals(Model4Temporal)
+
+NEWDFTemporal3 <-data.frame(RES3=residuals.Model3Temporal, 
+                            RES4=residuals.Model4Temporal)
+PartialPlotTemporal3 <- ggplot(data=NEWDFTemporal3, aes(x=residuals.Model4Temporal, y=residuals.Model3Temporal))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Trait Anxiety",
+                                                     y="Temporal lobe volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotTemporal3
+```
+
+```{r}
+Model1Thalamus <-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2Thal)
+residuals.Model1Thalamus <- residuals(Model1Thalamus)
+
+Model2Thalamus <- lm(formula=EventSum~STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                     data=eprimeStruct2Thal)
+residuals.Model2Thalamus <- residuals(Model2Thalamus)
+
+NEWDFThalamus<-data.frame(RES1=residuals.Model1Thalamus, 
+                          RES2=residuals.Model2Thalamus)
+PartialPlotThalamus <- ggplot(data=NEWDFThalamus, aes(x=residuals.Model2Thalamus, y=residuals.Model1Thalamus))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Stressful events", y="Thalamus volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotThalamus
+```
+
+```{r}
+Model3Thalamus <-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX,
+                    data=eprimeStruct2Thal)
+residuals.Model3Thalamus <- residuals(Model3Thalamus)
+
+Model4Thalamus <- lm(formula=STAI_TRSum~EventSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX,
+                     data=eprimeStruct2Thal)
+residuals.Model4Thalamus  <- residuals(Model4Thalamus)
+
+NEWDFThalamus3 <-data.frame(RES3=residuals.Model3Thalamus, 
+                            RES4=residuals.Model4Thalamus)
+PartialPlotThalamus3 <- ggplot(data=NEWDFThalamus3, aes(x=residuals.Model4Thalamus, y=residuals.Model3Thalamus))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Trait Anxiety",
+                                                     y="Thalamus volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotThalamus3
+```
+
+```{r}
+Model1Amygdala <-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2Amyg)
+residuals.Model1Amygdala <- residuals(Model1Amygdala)
+
+Model2Amygdala <- lm(formula=EventSum~STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                     data=eprimeStruct2Amyg)
+residuals.Model2Amygdala <- residuals(Model2Amygdala)
+
+NEWDFAmygdala<-data.frame(RES1=residuals.Model1Amygdala,
+                          RES2=residuals.Model2Amygdala)
+PartialPlotAmygdala <- ggplot(data=NEWDFAmygdala, aes(x=residuals.Model2Amygdala, y=residuals.Model1Amygdala))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Stressful events", y="Amygdala volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotAmygdala
+```
+
+```{r}
+Model3Amygdala <-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                    data=eprimeStruct2Amyg)
+residuals.Model3Amygdala <- residuals(Model3Amygdala)
+
+Model4Amygdala <- lm(formula=STAI_TRSum~EventSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                     data=eprimeStruct2Amyg)
+residuals.Model4Amygdala  <- residuals(Model4Amygdala)
+
+NEWDFAmygdala3 <-data.frame(RES3=residuals.Model3Amygdala, 
+                            RES4=residuals.Model4Amygdala)
+PartialPlotAmygdala3 <- ggplot(data=NEWDFAmygdala3,
+                               aes(x=residuals.Model4Amygdala, y=residuals.Model3Amygdala))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Trait Anxiety", y="Amygdala volume", cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, 
+              colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotAmygdala3
+```
+
+```{r}
+Model1Hippocampus <-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                       data=eprimeStruct2)
+residuals.Model1Hippocampus <- residuals(Model1Hippocampus)
+
+Model2Hippocampus <- lm(formula=EventSum~STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                        data=eprimeStruct2)
+residuals.Model2Hippocampus <- residuals(Model2Hippocampus)
+
+NEWDFHippocampus<-data.frame(RES1=residuals.Model1Hippocampus,
+                             RES2=residuals.Model2Hippocampus)
+PartialPlotHippocampus <- ggplot(data=NEWDFHippocampus, 
+                                 aes(x=residuals.Model2Hippocampus, 
+                                     y=residuals.Model1Hippocampus))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Stressful events",
+                                                     y="Hippocampus volume", 
+                                                     cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotHippocampus
+```
+
+```{r}
+Model3Hippocampus <-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                       data=eprimeStruct2)
+residuals.Model3Hippocampus <- residuals(Model3Hippocampus)
+
+Model4Hippocampus <- lm(formula=STAI_TRSum~EventSum+GA+PMA+
+                                         MAT_AGE+IMD_SES+DAYS_TPN+SEX, 
+                        data=eprimeStruct2)
+residuals.Model4Hippocampus  <- residuals(Model4Hippocampus)
+
+NEWDFHippocampus3 <-data.frame(RES3=residuals.Model3Hippocampus, 
+                               RES4=residuals.Model4Hippocampus)
+PartialPlotHippocampus3 <- ggplot(data=NEWDFHippocampus3,
+                                  aes(x=residuals.Model4Hippocampus, 
+                                      y=residuals.Model3Hippocampus))+
+  geom_point(size=2, colour="#031d24", pch=1) + labs(x="Trait Anxiety",
+                                                     y="Hippocampus volume", 
+                                                     cex.lab=0.50)+
+  geom_smooth(method="lm", alpha=0.2, colour="#031d24")+theme(axis.title=element_text(size=15))
+PartialPlotHippocampus3
+```
+
+SENSITIVITY ANALYSIS (Days Ventilation)
+
+We repeated our main analyses including "Days on ventilation" in the model instead of "Days on parenteral nutrition", to investigate the robustness of our results. 
+
+Frontal GM by TBV 
+```{r}
+regressionVent.FrontalGMbyTBV <-lm(formula=FrontalGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                 MAT_AGE+IMD_SES+SEX+Days_Vent,data=eprimeStruct2)
+summary(regressionVent.FrontalGMbyTBV)
+```
+
+Temp GM by TBV: 
+
+```{r}
+regressionVent.TempGMbyTBV <-lm(formula=TempGMbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                              MAT_AGE+IMD_SES+SEX+Days_Vent,data=eprimeStruct2Temp)
+summary(regressionVent.TempGMbyTBV)
+```
+
+Thalamus by TBV: 
+
+```{r}
+regressionVent.ThalamusbyTBV <-lm(formula=ThalamusbyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                MAT_AGE+IMD_SES+SEX+Days_Vent,
+                                data=eprimeStruct2Thal)
+summary(regressionVent.ThalamusbyTBV)
+```
+
+Amygdala by TBV
+
+```{r}
+regressionVent.AmygdalabyTBV <-lm(formula=AmygdalabyTBV~EventSum+STAI_TRSum+GA+PMA+
+                                MAT_AGE+IMD_SES+SEX+Days_Vent, data=eprimeStruct2Amyg) 
+summary(regressionVent.AmygdalabyTBV)
+```
+
+
+HIPPOCAMPUS BY TBV
+
+Fitting the regression line for main model 
+```{r}
+regressionVent.HippocampusByTBV <-lm(formula=HippocampusByTBV~EventSum+STAI_TRSum+GA+PMA+
+                                   MAT_AGE+IMD_SES+SEX+Days_Vent,data=eprimeStruct2) 
+summary(regressionVent.HippocampusByTBV)
+```
+
+Getting info about the number of stressful life events experienced 
+```{r}
+psych::describe(eprimeStruct$Stressful_number)
+```
+
+```{r}
+psych::describe(eprimeStruct$EventSum)
+```
+
+EXPLORATORY: 
+Spearman correlations for gender 
+
+Frontal GM by TBV 
+```{r}
+cor1 <- cor.test(eprimeMalesF$FrontalGMbyTBV, eprimeMalesF$EventSum, 
+                 method="spearman", exact=F)
+cor1
+```
+
+```{r}
+cor2 <- cor.test(eprimeFemalesF$FrontalGMbyTBV, eprimeFemalesF$EventSum, 
+                 method="spearman", exact=F)
+cor2
+```
+
+```{r}
+cor3 <- cor.test(eprimeMalesF$FrontalGMbyTBV, eprimeMalesF$STAI_TRSum,
+                 method="spearman", exact=F)
+cor3
+```
+
+```{r}
+cor4 <- cor.test(eprimeFemalesF$FrontalGMbyTBV, eprimeFemalesF$STAI_TRSum, 
+                 method="spearman", exact=F)
+cor4
+```
+
+Temp GM by TBV
+```{r}
+cor5 <- cor.test(eprimeMalesT$TempGMbyTBV, eprimeMalesT$EventSum, 
+                 method="spearman", exact=F)
+cor5
+```
+
+```{r}
+cor6 <- cor.test(eprimeFemalesT$TempGMbyTBV, eprimeFemalesT$EventSum, 
+                 method="spearman", exact=F)
+cor6
+```
+
+```{r}
+cor7 <- cor.test(eprimeMalesT$TempGMbyTBV, eprimeMalesT$STAI_TRSum, 
+                 method="spearman", exact=F)
+cor7
+```
+
+```{r}
+cor8 <- cor.test(eprimeFemalesT$TempGMbyTBV, eprimeFemalesT$STAI_TRSum,
+                 method="spearman", exact=F)
+cor8
+```
+
+
+Amygdala by TBV
+```{r}
+cor9 <- cor.test(eprimeMalesA$AmygdalabyTBV, eprimeMalesA$EventSum,
+                 method="spearman", exact=F)
+cor9
+```
+
+```{r}
+cor10 <- cor.test(eprimeFemalesA$AmygdalabyTBV, eprimeFemalesA$EventSum,
+                  method="spearman", exact=F)
+cor10
+```
+
+```{r}
+cor11 <- cor.test(eprimeMalesA$AmygdalabyTBV, eprimeMalesA$STAI_TRSum, 
+                  method="spearman", exact=F)
+cor11
+```
+
+```{r}
+cor12 <- cor.test(eprimeFemalesA$AmygdalabyTBV, eprimeFemalesA$STAI_TRSum, 
+                  method="spearman", exact=F)
+cor12
+```
+
+
+Thalamus by TBV
+```{r}
+cor13 <- cor.test(eprimeMalesTh$ThalamusbyTBV, eprimeMalesTh$EventSum, 
+                  method="spearman", exact=F)
+cor13
+```
+
+```{r}
+cor14 <- cor.test(eprimeFemalesTh$ThalamusbyTBV, eprimeFemalesTh$EventSum,
+                  method="spearman", exact=F)
+cor14
+```
+
+```{r}
+cor15 <- cor.test(eprimeMalesTh$ThalamusbyTBV, eprimeMalesTh$STAI_TRSum,
+                  method="spearman", exact=F)
+cor15
+```
+
+```{r}
+cor16 <- cor.test(eprimeFemalesTh$ThalamusbyTBV, eprimeFemalesTh$STAI_TRSum, 
+                  method="spearman", exact=F)
+cor16
+```
+
+Hippocampus by TBV
+```{r}
+cor17 <- cor.test(eprimeMalesH$HippocampusByTBV, eprimeMalesH$EventSum, 
+                  method="spearman", exact=F)
+cor17
+```
+
+```{r}
+cor18 <- cor.test(eprimeFemalesH$HippocampusByTBV, eprimeFemalesH$EventSum, 
+                  method="spearman", exact=F)
+cor18
+```
+
+```{r}
+cor19 <- cor.test(eprimeMalesH$HippocampusByTBV, eprimeMalesH$STAI_TRSum,
+                  method="spearman", exact=F)
+cor19
+```
+
+```{r}
+cor20 <- cor.test(eprimeFemalesH$HippocampusByTBV, eprimeFemalesH$STAI_TRSum, 
+                  method="spearman", exact=F)
+cor20
+```
+
+
+
+
+
+
+
+# REFERENCES FOR PACKAGES USED
+```{r}
+citation(package = "tidyverse")
+citation(package="plyr")
+citation(package="dplyr")
+citation(package="psych")
+citation(package="janitor")
+citation(package="lsr")
+citation(package="car")
+citation(package="gplots")
+citation(package="Hmisc")
+citation(package="corrplot")
+citation(package="heplots")
+citation(package="sandwich")
+citation(package="lmtest")
+citation(package="ggplot2")
+```
+
